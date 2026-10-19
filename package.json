@@ -6,8 +6,7 @@
   "description": "Sovereign stateful die for the append, recall, induction, and customer foldback ports of software trajectory memory.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/red-cup-engineering/computer-code-engineering-services-section.git",
-    "directory": "services/computer-code-development-services-section/services/software-trajectory-memory-service"
+    "url": "git+https://github.com/red-cup-engineering/software-trajectory-memory-service.git"
   },
   "exports": {
     ".": "./src/client.mjs",
