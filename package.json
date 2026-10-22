@@ -27,5 +27,10 @@
   "dependencies": {
     "@red-cup-engineering/semantic-content-identify-service": "workspace:*",
     "@red-cup-engineering/semiotic-eavt-services-section": "workspace:*"
+  },
+  "license": "MIT",
+  "funding": {
+    "type": "individual",
+    "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
   }
 }
