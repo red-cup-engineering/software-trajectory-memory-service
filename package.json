@@ -1,6 +1,6 @@
 {
   "name": "@red-cup-engineering/software-trajectory-memory-service",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "type": "module",
   "description": "Sovereign stateful die for the append, recall, induction, and customer foldback ports of software trajectory memory.",
@@ -19,14 +19,18 @@
   ],
   "scripts": {
     "check": "node --check src/memory.mjs && node --check src/client.mjs",
-    "verify": "npm run check"
+    "test": "node --import tsx test/customer-acceptance-memory.test.mjs",
+    "verify": "npm run check && npm test"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "@red-cup-engineering/semantic-content-identify-service": "workspace:*",
-    "@red-cup-engineering/semiotic-eavt-services-section": "workspace:*"
+    "@red-cup-engineering/semantic-content-identify-service": "0.2.5",
+    "@red-cup-engineering/semantic-record-journal-service": "0.1.2"
+  },
+  "devDependencies": {
+    "tsx": "4.20.6"
   },
   "license": "MIT",
   "funding": {

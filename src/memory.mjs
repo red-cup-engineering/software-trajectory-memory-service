@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { EMPTY_WITNESS_ROOT, identifyJsonSemanticContent } from "@red-cup-engineering/semantic-content-identify-service";
-import { createSemanticRecordJournal } from "@red-cup-engineering/semiotic-eavt-services-section/record-semantic-record";
+import { createSemanticRecordJournal } from "@red-cup-engineering/semantic-record-journal-service";
 
 export const TRAJECTORY_MEMORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 export const DEFAULT_TRAJECTORY_MEMORY_DATA_ROOT = fileURLToPath(new URL("../data", import.meta.url));
@@ -10,6 +10,13 @@ const RECORD_KIND = "software-trajectory-memory.record";
 
 function rmnId(value) { return identifyJsonSemanticContent({ objectKind: RECORD_KIND, value, witnessRoot: EMPTY_WITNESS_ROOT }).id; }
 function typedRecord(body) { return Object.freeze({ id: rmnId(body), ...body }); }
+
+function exactRecord(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || typeof value.id !== "string") return false;
+  try {
+    return value.id === rmnId(Object.fromEntries(Object.entries(value).filter(([key]) => key !== "id")));
+  } catch { return false; }
+}
 
 function tokens(text) {
   return new Set(String(text || "").toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) || []);
@@ -86,11 +93,55 @@ export function trajectoryRecipeFingerprint(actions = []) {
   return rmnId({ type: "SoftwareTrajectoryRecipe", actions: replayActions(actions) });
 }
 
+function proposalBindsSelectedActions(trajectory) {
+  const actions = trajectory?.outcome?.selectedActions;
+  if (!Array.isArray(actions)) return false;
+  try {
+    return trajectoryRecipeFingerprint(actions) === trajectory.outcome.proposal?.trajectoryRecipeFingerprint;
+  } catch { return false; }
+}
+
+/** Read the original memory owner's admitted customer decisions. A stored
+ * trajectory, its local verification, and customer acceptance are distinct
+ * evidence. The authenticated caller and admitCustomerTrajectoryFoldback own
+ * admission; content identity only preserves that evidence, never grants
+ * customer authority. Both recall and recipe induction use this one reading.
+ */
+function acceptedTrajectoryReadings(rows) {
+  const foldbacks = rows.filter(row => row?.type === "SoftwareMissionCustomerAcceptedTrajectoryFoldback"
+    && row.executionProvider === MISSION_EXECUTION_ACTOR
+    && row.routePolicy === "enterprise-memory-pulse-only" && row.customerTerritoryMutation === false
+    && [row.customer, row.supplier, row.customerDecision, row.customerFoldback, row.candidate, row.acceptedAt]
+      .every(value => typeof value === "string" && value.length > 0)
+    && exactRecord(row));
+  return rows.filter(row => row?.type === "SoftwareMissionTrajectory" && row.outcome?.verified === true)
+    .flatMap(row => {
+      const proposal = row.outcome.proposal;
+      const admitted = proposal?.proposalOnly === true && proposal.customerMutation === false
+        && proposalBindsSelectedActions(row)
+        ? foldbacks.filter(foldback => foldback.trajectory === row.id && foldback.taskClass === row.taskClass
+          && foldback.trajectoryFingerprint === proposal.trajectoryFingerprint
+          && foldback.trajectoryRecipeFingerprint === proposal.trajectoryRecipeFingerprint)
+        : [];
+      const customerAcceptances = admitted
+        .filter((foldback, index, all) => all.findIndex(other => other.id === foldback.id) === index)
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map(foldback => Object.freeze({
+          record: foldback.id, decision: foldback.customerDecision, foldback: foldback.customerFoldback,
+          customer: foldback.customer, supplier: foldback.supplier, candidate: foldback.candidate,
+          acceptedAt: foldback.acceptedAt,
+        }));
+      return row.outcome.promotable === true || customerAcceptances.length > 0
+        ? [{ row, customerAcceptances: Object.freeze(customerAcceptances) }] : [];
+    });
+}
+
 export function deriveInducedTrajectoryResolver(rows, taskClass) {
   if (!taskClass) return { eligible: false, reason: "task-class-absent", attempts: 0, verified: 0 };
-  const customerAccepted = new Set(rows.filter((row) => row?.type === "SoftwareMissionCustomerAcceptedTrajectoryFoldback").map((row) => row.trajectory));
   const attempts = rows.filter((row) => row?.type === "SoftwareMissionTrajectory" && row.taskClass === taskClass);
-  const verified = attempts.filter((row) => row.outcome?.verified === true && (row.outcome?.promotable === true || customerAccepted.has(row.id)) && replayActions(row.outcome?.selectedActions).some(({ action }) => action === "edit"));
+  const accepted = acceptedTrajectoryReadings(rows).filter(({ row }) => row.taskClass === taskClass
+    && replayActions(row.outcome?.selectedActions).some(({ action }) => action === "edit"));
+  const verified = accepted.map(({ row }) => row);
   const clusters = new Map();
   for (const row of verified) {
     const actions = replayActions(row.outcome.selectedActions), fingerprint = trajectoryRecipeFingerprint(actions);
@@ -116,6 +167,8 @@ export function deriveInducedTrajectoryResolver(rows, taskClass) {
     dominantCount: dominant?.count ?? 0,
     actions: eligible ? dominant.actions : [],
     witnesses: eligible ? dominant.witnesses : [],
+    customerAcceptances: accepted.flatMap(({ row, customerAcceptances }) =>
+      customerAcceptances.map(receipt => Object.freeze({ trajectory: row.id, ...receipt }))),
     resolverId: eligible ? dominant.fingerprint : null,
   };
 }
@@ -125,14 +178,20 @@ export async function inducedTrajectoryResolver(taskClass, { rows: suppliedRows,
 }
 
 export async function recallTrajectories(objective, { taskClass = null, rows: suppliedRows, ...options } = {}) {
-  const rows = (suppliedRows ?? await projectedRows(options))
+  const snapshot = suppliedRows ?? await projectedRows(options);
+  const rows = snapshot
     .filter((row) => row?.type === "SoftwareMissionTrajectory")
     .filter((row) => !taskClass || row.taskClass === taskClass)
     .map((row) => ({ row, similarity: score(objective, row.objective) }))
     .filter((entry) => entry.similarity.numerator !== "0");
-  const verified = rows.filter(({ row }) => row.outcome?.verified === true && row.outcome?.promotable === true)
+  const verified = acceptedTrajectoryReadings(snapshot)
+    .filter(({ row }) => !taskClass || row.taskClass === taskClass)
+    .map(reading => ({ ...reading, similarity: score(objective, reading.row.objective) }))
+    .filter(entry => entry.similarity.numerator !== "0")
     .sort((a, b) => compareFractions(b.similarity, a.similarity))
-    .map(({ row, similarity }) => ({
+    .map(({ row, similarity, customerAcceptances }) => ({
+      trajectory: row.id,
+      customerAcceptances,
       similarity,
       objective: row.objective,
       changedPaths: row.outcome.changedPaths ?? [],
@@ -224,11 +283,12 @@ export async function promotionReadout(taskClass, { rows: suppliedRows, ...optio
  * the carrier is hydrated exactly once. */
 export async function missionMemoryContext(objective, taskClass, missionId, sourceIdentity, { rows: suppliedRows, ...options } = {}) {
   const rows = suppliedRows ?? await projectedRows(options);
+  const resolver = deriveInducedTrajectoryResolver(rows, taskClass);
   return Object.freeze({
     checkpoint: await latestMissionCheckpoint(missionId, sourceIdentity, { rows }),
     memories: await recallTrajectories(objective, { taskClass, rows }),
-    resolver: deriveInducedTrajectoryResolver(rows, taskClass),
-    promotion: deriveInducedTrajectoryResolver(rows, taskClass),
+    resolver,
+    promotion: resolver,
   });
 }
 
@@ -272,7 +332,7 @@ export async function appendTrajectoryRecord(record, recordedAt, {
     category: TRAJECTORY_CATEGORY,
     recordedAt,
     record,
-    told: { for: verified, against: !verified },
+    charge: { support: verified, refutation: !verified },
     relation: {
       subject: record?.missionId ?? record?.id ?? MISSION_EXECUTION_ACTOR,
       predicate: record?.type ?? "records",
@@ -292,12 +352,11 @@ export async function admitCustomerTrajectoryFoldback(activity, {
 } = {}) {
   const rows = suppliedRows ?? await projectedRows({ dataRoot, journal });
   const decision = activity?.object, foldback = decision?.foldbackSnapshot;
-  const exact = (value) => value?.id === rmnId(Object.fromEntries(Object.entries(value ?? {}).filter(([key]) => key !== "id")));
-  if (typeof expectedSupplier !== "string" || !expectedSupplier || activity?.["@context"] !== "https://www.w3.org/ns/activitystreams" || activity.type !== "Accept" || activity.actor !== expectedCustomer || activity.target !== expectedSupplier || !exact(decision) || decision.type !== "ImprovementCustomerDecision" || decision.accepted !== true || decision.customer !== expectedCustomer || decision.supplier !== expectedSupplier) throw new Error("exact customer-authored accepted improvement decision is required");
-  if (!exact(foldback) || decision.foldback !== foldback.id || foldback.type !== "ImprovementFoldback" || foldback.customer !== expectedCustomer || foldback.supplier !== expectedSupplier || foldback.candidate !== decision.candidate || foldback.route?.executionProvider !== MISSION_EXECUTION_ACTOR || foldback.routePolicy !== "enterprise-memory-pulse-only") throw new Error("customer decision requires one exact execution-provider-bound foldback snapshot");
+  if (typeof expectedCustomer !== "string" || !expectedCustomer || typeof expectedSupplier !== "string" || !expectedSupplier || activity?.["@context"] !== "https://www.w3.org/ns/activitystreams" || activity.type !== "Accept" || activity.actor !== expectedCustomer || activity.target !== expectedSupplier || !exactRecord(decision) || decision.type !== "ImprovementCustomerDecision" || decision.accepted !== true || decision.customer !== expectedCustomer || decision.supplier !== expectedSupplier) throw new Error("exact customer-authored accepted improvement decision is required");
+  if (!exactRecord(foldback) || decision.foldback !== foldback.id || foldback.type !== "ImprovementFoldback" || foldback.customer !== expectedCustomer || foldback.supplier !== expectedSupplier || foldback.candidate !== decision.candidate || foldback.route?.executionProvider !== MISSION_EXECUTION_ACTOR || foldback.routePolicy !== "enterprise-memory-pulse-only") throw new Error("customer decision requires one exact execution-provider-bound foldback snapshot");
   const trajectory = rows.find((row) => row?.type === "SoftwareMissionTrajectory" && row.id === foldback.route?.supplierTrajectory);
   const proposal = trajectory?.outcome?.proposal;
-  if (!trajectory || trajectory.outcome?.verified !== true || proposal?.proposalOnly !== true || proposal.customerMutation !== false || foldback.route?.trajectoryFingerprint !== proposal.trajectoryFingerprint || foldback.route?.trajectoryRecipeFingerprint !== proposal.trajectoryRecipeFingerprint) throw new Error("customer foldback does not bind one exact verified proposal-only supplier trajectory");
+  if (!trajectory || trajectory.outcome?.verified !== true || proposal?.proposalOnly !== true || proposal.customerMutation !== false || !proposalBindsSelectedActions(trajectory) || foldback.route?.trajectoryFingerprint !== proposal.trajectoryFingerprint || foldback.route?.trajectoryRecipeFingerprint !== proposal.trajectoryRecipeFingerprint) throw new Error("customer foldback does not bind one exact verified proposal-only supplier trajectory");
   const body = {
     type: "SoftwareMissionCustomerAcceptedTrajectoryFoldback", executionProvider: MISSION_EXECUTION_ACTOR, supplier: expectedSupplier, customer: expectedCustomer,
     trajectory: trajectory.id, taskClass: trajectory.taskClass, customerDecision: decision.id, customerFoldback: foldback.id,
