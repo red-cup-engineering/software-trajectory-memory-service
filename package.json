@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "check": "node --check src/memory.mjs && node --check src/client.mjs",
-    "test": "node --import tsx test/customer-acceptance-memory.test.mjs",
+    "test": "node --test test/customer-acceptance-memory.test.mjs",
     "verify": "npm run check && npm test"
   },
   "engines": {
@@ -27,10 +27,7 @@
   },
   "dependencies": {
     "@red-cup-engineering/semantic-content-identify-service": "0.2.5",
-    "@red-cup-engineering/semantic-record-journal-service": "0.1.2"
-  },
-  "devDependencies": {
-    "tsx": "4.20.6"
+    "@red-cup-engineering/semantic-record-journal-service": "0.1.11"
   },
   "license": "MIT",
   "funding": {

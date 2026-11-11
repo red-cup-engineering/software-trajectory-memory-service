@@ -42,15 +42,9 @@ snapshots for composing and testing the existing service; they are not public
 customer-submission interfaces. Keep transport authentication at the original
 host and use the foldback admission boundary before appending customer evidence.
 
-Run `npm ci --ignore-scripts --no-audit --no-fund` followed by `npm run verify`.
-The standalone manifest and native npm lock select the verified published
-identity provider 0.2.5 and semantic-record journal 0.1.2. The scoped registry
-configuration uses the existing Group registry; public development tools use
-their original npm registry.
-The test command uses the declared `tsx` loader for published suppliers that
-export TypeScript source; it runs the eleven named cases, including real journal
-append/reopen/recall, without replacing their implementation.
-Plain Node cannot type-strip those suppliers from inside `node_modules`.
-Production hosts consuming that published closure must provide their supported
-TypeScript loader as well. The tests use Node 24 and `tsx` 4.20.6; source and
-local integration qualification do not establish an installed production host.
+Run `npm ci --ignore-scripts` and `npm run verify` from the package root.
+The lockfile selects the published identity and journal providers. The native
+suite runs in Node with the installed dependency closure and exercises actual
+journal append, reopen, recall and independent support and refutation charges.
+Package qualification repeats the suite against the packed service and imports
+its declared entry points.
