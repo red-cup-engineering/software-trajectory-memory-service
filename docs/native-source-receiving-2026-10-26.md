@@ -73,7 +73,7 @@ execution route. No supplier, source check or pack result was substituted.
 ## Earlier published materializer refusals
 
 The existing registry artifact
-`@red-cup-engineering/node-runtime-release-materialization-service@0.11.1`
+`@red-cup-engineering/node-runtime-materialization-engineering-services-section@0.11.1`
 was received with git head `91c160c350fc439ac88619f392195dd8b35da3a7`, archive
 SHA-256 `fd1c44672a1b04177a124af3238585cd46ff79048e3058b28f1b6db05dc8bec5`, and
 integrity
